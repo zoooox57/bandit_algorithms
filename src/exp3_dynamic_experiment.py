@@ -1,7 +1,7 @@
-"""Run the bandit mini-benchmark.
+"""Run EXP3 in a dynamic Bernoulli bandit environment.
 
 Example:
-    python src/experiment.py --horizon 5000 --seeds 50
+    python src/exp3_dynamic_experiment.py --horizon 1000 --seeds 20
 """
 
 from __future__ import annotations
@@ -23,25 +23,38 @@ from agents import (
     ThompsonSamplingAgent,
     UCBAgent,
 )
-from envs import BernoulliBandit
+from envs import DynamicBernoulliBandit
 
 
-def make_agents(n_arms: int, seed: int):
-    """Create the algorithms compared in the benchmark."""
+DEFAULT_PROB_SCHEDULE = [
+    [0.8, 0.2, 0.2, 0.2, 0.2],
+    [0.2, 0.8, 0.2, 0.2, 0.2],
+    [0.2, 0.2, 0.8, 0.2, 0.2],
+    [0.2, 0.2, 0.2, 0.8, 0.2],
+    [0.2, 0.2, 0.2, 0.2, 0.8],
+]
+
+
+def make_agents(n_arms: int, seed: int, gamma: float):
+    """Create algorithms for the dynamic benchmark."""
 
     return [
+        EXP3Agent(n_arms=n_arms, gamma=gamma, seed=seed),
         EpsilonGreedyAgent(n_arms=n_arms, epsilon=0.1, seed=seed),
         DecayEpsilonGreedyAgent(n_arms=n_arms, c=1.0, seed=seed),
         UCBAgent(n_arms=n_arms, c=2.0, seed=seed),
         ThompsonSamplingAgent(n_arms=n_arms, seed=seed),
-        EXP3Agent(n_arms=n_arms, gamma=0.1, seed=seed),
     ]
 
 
-def run_one_seed(agent, probs, horizon: int, seed: int) -> pd.DataFrame:
-    """Run one agent in one Bernoulli bandit environment."""
+def run_one_seed(agent, prob_schedule, segment_length: int, horizon: int, seed: int) -> pd.DataFrame:
+    """Run one agent in one dynamic Bernoulli bandit environment."""
 
-    env = BernoulliBandit(probs=probs, seed=seed)
+    env = DynamicBernoulliBandit(
+        prob_schedule=prob_schedule,
+        segment_length=segment_length,
+        seed=seed,
+    )
 
     cumulative_reward = 0.0
     cumulative_regret = 0.0
@@ -50,20 +63,21 @@ def run_one_seed(agent, probs, horizon: int, seed: int) -> pd.DataFrame:
 
     for t in range(1, horizon + 1):
         arm = agent.select_arm(t)
-        reward = env.pull(arm)
+        reward = env.pull(arm, t)
         agent.update(arm, reward)
 
-        # Pseudo-regret uses the true means for evaluation only.
-        instantaneous_regret = env.best_mean - env.mean_reward(arm)
+        instantaneous_regret = env.best_mean(t) - env.mean_reward(arm, t)
         cumulative_regret += instantaneous_regret
         cumulative_reward += reward
-        optimal_pulls += int(arm == env.best_arm)
+        optimal_pulls += int(arm == env.best_arm(t))
 
         rows.append(
             {
                 "algorithm": agent.name,
                 "seed": seed,
                 "t": t,
+                "segment": (t - 1) // segment_length,
+                "best_arm": env.best_arm(t),
                 "arm": arm,
                 "reward": reward,
                 "cumulative_reward": cumulative_reward,
@@ -77,13 +91,14 @@ def run_one_seed(agent, probs, horizon: int, seed: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run_benchmark(probs, horizon: int, n_seeds: int) -> pd.DataFrame:
+def run_benchmark(prob_schedule, segment_length: int, horizon: int, n_seeds: int, gamma: float):
     """Run all algorithms over multiple random seeds."""
 
     all_runs = []
+    n_arms = len(prob_schedule[0])
     for seed in range(n_seeds):
-        for agent in make_agents(n_arms=len(probs), seed=seed):
-            all_runs.append(run_one_seed(agent, probs, horizon, seed))
+        for agent in make_agents(n_arms=n_arms, seed=seed, gamma=gamma):
+            all_runs.append(run_one_seed(agent, prob_schedule, segment_length, horizon, seed))
     return pd.concat(all_runs, ignore_index=True)
 
 
@@ -105,12 +120,22 @@ def summarize(final_df: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
-def plot_metric(mean_df: pd.DataFrame, metric: str, ylabel: str, output_path: Path) -> None:
+def plot_metric(
+    mean_df: pd.DataFrame,
+    metric: str,
+    ylabel: str,
+    output_path: Path,
+    segment_length: int,
+    horizon: int,
+) -> None:
     """Plot one metric as a function of time."""
 
     plt.figure(figsize=(8, 5))
     for algorithm, group in mean_df.groupby("algorithm"):
         plt.plot(group["t"], group[metric], label=algorithm)
+
+    for switch_t in range(segment_length + 1, horizon + 1, segment_length):
+        plt.axvline(switch_t, color="black", linestyle="--", linewidth=0.8, alpha=0.25)
 
     plt.xlabel("Round t")
     plt.ylabel(ylabel)
@@ -122,8 +147,14 @@ def plot_metric(mean_df: pd.DataFrame, metric: str, ylabel: str, output_path: Pa
     plt.close()
 
 
-def save_results(results: pd.DataFrame, output_dir: Path) -> None:
-    """Save raw curves, summary table, and plots."""
+def save_results(
+    results: pd.DataFrame,
+    output_dir: Path,
+    prob_schedule,
+    segment_length: int,
+    horizon: int,
+) -> None:
+    """Save raw curves, summary table, schedule, and plots."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,27 +168,37 @@ def save_results(results: pd.DataFrame, output_dir: Path) -> None:
         .reset_index()
     )
 
+    schedule = pd.DataFrame(prob_schedule)
+    schedule.index.name = "segment"
+
     summary = summarize(results)
     mean_curves.to_csv(output_dir / "mean_curves.csv", index=False)
     summary.to_csv(output_dir / "summary.csv", index=False)
+    schedule.to_csv(output_dir / "prob_schedule.csv")
 
     plot_metric(
         mean_curves,
         metric="cumulative_regret",
-        ylabel="Cumulative pseudo-regret",
+        ylabel="Cumulative dynamic pseudo-regret",
         output_path=output_dir / "cumulative_regret.png",
+        segment_length=segment_length,
+        horizon=horizon,
     )
     plot_metric(
         mean_curves,
         metric="average_reward",
         ylabel="Average reward",
         output_path=output_dir / "average_reward.png",
+        segment_length=segment_length,
+        horizon=horizon,
     )
     plot_metric(
         mean_curves,
         metric="optimal_arm_rate",
-        ylabel="Optimal arm selection rate",
+        ylabel="Current best arm selection rate",
         output_path=output_dir / "optimal_arm_rate.png",
+        segment_length=segment_length,
+        horizon=horizon,
     )
 
     print("\nFinal summary:")
@@ -166,20 +207,20 @@ def save_results(results: pd.DataFrame, output_dir: Path) -> None:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Bandit algorithms mini-benchmark")
+    parser = argparse.ArgumentParser(description="EXP3 dynamic bandit benchmark")
+    parser.add_argument("--horizon", type=int, default=1000, help="Number of rounds.")
+    parser.add_argument("--seeds", type=int, default=20, help="Number of random seeds.")
     parser.add_argument(
-        "--probs",
-        type=float,
-        nargs="+",
-        default=[0.1, 0.3, 0.5, 0.6, 0.8],
-        help="Bernoulli success probabilities for the arms.",
+        "--segment-length",
+        type=int,
+        default=200,
+        help="Number of rounds before switching to the next probability vector.",
     )
-    parser.add_argument("--horizon", type=int, default=5000, help="Number of rounds.")
-    parser.add_argument("--seeds", type=int, default=50, help="Number of random seeds.")
+    parser.add_argument("--gamma", type=float, default=0.1, help="EXP3 exploration parameter.")
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("results/02_stationary_benchmark"),
+        default=Path("results/03_dynamic_exp3"),
         help="Directory where CSV files and plots will be saved.",
     )
     return parser.parse_args()
@@ -187,8 +228,20 @@ def parse_args():
 
 def main() -> None:
     args = parse_args()
-    results = run_benchmark(probs=args.probs, horizon=args.horizon, n_seeds=args.seeds)
-    save_results(results, args.output_dir)
+    results = run_benchmark(
+        prob_schedule=DEFAULT_PROB_SCHEDULE,
+        segment_length=args.segment_length,
+        horizon=args.horizon,
+        n_seeds=args.seeds,
+        gamma=args.gamma,
+    )
+    save_results(
+        results,
+        output_dir=args.output_dir,
+        prob_schedule=DEFAULT_PROB_SCHEDULE,
+        segment_length=args.segment_length,
+        horizon=args.horizon,
+    )
 
 
 if __name__ == "__main__":

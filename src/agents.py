@@ -100,6 +100,33 @@ class UCBAgent(BanditAgent):
         return int(np.argmax(self.q_values + bonus))
 
 
+class EXP3Agent(BanditAgent):
+    """EXP3 agent for adversarial bandits with rewards in [0, 1]."""
+
+    def __init__(self, n_arms: int, gamma: float = 0.1, seed: int = 0):
+        super().__init__(n_arms=n_arms, seed=seed)
+        if not 0.0 <= gamma <= 1.0:
+            raise ValueError("gamma must be in [0, 1].")
+        self.gamma = gamma
+        self.log_weights = np.zeros(n_arms, dtype=float)
+        self.probs = np.ones(n_arms, dtype=float) / n_arms
+        self.name = f"exp3_gamma_{gamma:g}"
+
+    def action_probabilities(self) -> np.ndarray:
+        weights = np.exp(self.log_weights - np.max(self.log_weights))
+        weight_probs = weights / np.sum(weights)
+        return (1.0 - self.gamma) * weight_probs + self.gamma / self.n_arms
+
+    def select_arm(self, t: int) -> int:
+        self.probs = self.action_probabilities()
+        return int(self.rng.choice(self.n_arms, p=self.probs))
+
+    def update(self, arm: int, reward: float) -> None:
+        super().update(arm, reward)
+        estimated_reward = reward / self.probs[arm]
+        self.log_weights[arm] += self.gamma * estimated_reward / self.n_arms
+
+
 class ThompsonSamplingAgent(BanditAgent):
     """Thompson Sampling for Bernoulli bandits using Beta posteriors."""
 
