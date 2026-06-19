@@ -12,9 +12,13 @@ This is a small benchmark for multi-armed bandit algorithms. The goal is to comp
 │   ├── 01_simple_baseline/      # Plots from the first simple experiment
 │   ├── 02_stationary_benchmark/ # Fixed-probability benchmark results
 │   ├── 03_dynamic_exp3/         # Dynamic probability benchmark results
-│   └── 04_exp3_gamma_sweep/     # EXP3 gamma sensitivity results
+│   ├── 04_exp3_gamma_sweep/     # EXP3 gamma sensitivity results
+│   └── 05_contextual_bandit/    # Contextual bandit benchmark results
 ├── src/
 │   ├── agents.py                # Bandit algorithms
+│   ├── contextual_agents.py     # Contextual bandit algorithms
+│   ├── contextual_envs.py       # Contextual bandit environment
+│   ├── contextual_experiment.py
 │   ├── envs.py                  # Stationary and dynamic environments
 │   ├── experiment.py            # Stationary benchmark runner
 │   ├── exp3_dynamic_experiment.py
@@ -22,7 +26,7 @@ This is a small benchmark for multi-armed bandit algorithms. The goal is to comp
 └── README.md
 ```
 
-The project has four experiment groups:
+The project has five experiment groups:
 
 | Experiment | Purpose | Code | Results |
 | --- | --- | --- | --- |
@@ -30,6 +34,7 @@ The project has four experiment groups:
 | Stationary benchmark | Compare algorithms when arm probabilities are fixed | `src/experiment.py` | `results/02_stationary_benchmark/` |
 | Dynamic EXP3 benchmark | Test algorithms when the best arm changes over time | `src/exp3_dynamic_experiment.py` | `results/03_dynamic_exp3/` |
 | EXP3 gamma sweep | Compare different EXP3 exploration rates and update rules | `src/exp3_gamma_sweep.py` | `results/04_exp3_gamma_sweep/` |
+| Contextual bandit | Compare contextual epsilon-greedy and LinUCB | `src/contextual_experiment.py` | `results/05_contextual_bandit/` |
 
 ## Environment
 
@@ -156,6 +161,35 @@ The gamma sweep uses the same dynamic environment as above and compares two EXP3
 
 In this setting, increasing `gamma` to `0.5` improves EXP3 because the best arm changes every 200 rounds. More uniform exploration gives EXP3 more chances to discover the new best arm after each switch. The loss-based update also helps for some smaller gamma values, because low rewards can push a selected arm's weight down instead of merely stopping it from increasing. However, even the best gamma in this sweep still performs worse than UCB in the dynamic benchmark, so changing the update rule helps but does not fully solve the lack of forgetting in vanilla EXP3.
 
+## Contextual Bandit Experiment
+
+The contextual experiment adds side information before each decision. Each round samples one of two user contexts:
+
+```python
+sports_user = [1.0, 0.0]
+music_user = [0.0, 1.0]
+```
+
+There are three arms: a sports-like arm, a music-like arm, and a general arm. The reward probability is:
+
+```text
+P(reward = 1 | context, arm) = sigmoid(context @ theta_arm)
+```
+
+This makes the best arm depend on the current context. The benchmark compares:
+
+- Contextual Epsilon-Greedy: mostly chooses the arm with the highest predicted reward, with random exploration
+- LinUCB: chooses the arm with the highest predicted reward plus an uncertainty bonus
+
+The default contextual run uses horizon 1000 and 20 random seeds. The results are saved in `results/05_contextual_bandit/`:
+
+| Rank | Algorithm | Cumulative contextual pseudo-regret ↓ | Average reward ↑ | Contextual optimal arm rate ↑ |
+| --- | --- | ---: | ---: | ---: |
+| 1 | LinUCB (`alpha=1`) | 12.66 ± 29.11 | 0.868 | 0.957 |
+| 2 | Contextual Epsilon-Greedy (`epsilon=0.1`) | 50.54 ± 24.07 | 0.831 | 0.867 |
+
+LinUCB performs better in this simple contextual environment because it explores arms with high uncertainty in the current context. Contextual epsilon-greedy also learns the context-dependent best arms, but its exploration is random rather than uncertainty-directed.
+
 ## Observations
 
 In this 200-round smoke benchmark, Thompson Sampling performs best. It has the lowest cumulative pseudo-regret, the highest average reward, and an optimal arm selection rate of about 83.7%. This suggests that the Beta-Bernoulli posterior helps the agent quickly concentrate its pulls on the true best arm while still maintaining useful uncertainty-driven exploration.
@@ -208,6 +242,12 @@ Run the EXP3 gamma sweep:
 
 ```bash
 python3 src/exp3_gamma_sweep.py --horizon 1000 --seeds 20 --segment-length 200 --output-dir results/04_exp3_gamma_sweep
+```
+
+Run the contextual bandit benchmark:
+
+```bash
+python3 src/contextual_experiment.py --horizon 1000 --seeds 20 --output-dir results/05_contextual_bandit
 ```
 
 Run the simple baseline scripts:
