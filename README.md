@@ -11,22 +11,25 @@ This is a small benchmark for multi-armed bandit algorithms. The goal is to comp
 ├── results/
 │   ├── 01_simple_baseline/      # Plots from the first simple experiment
 │   ├── 02_stationary_benchmark/ # Fixed-probability benchmark results
-│   └── 03_dynamic_exp3/         # Dynamic probability benchmark results
+│   ├── 03_dynamic_exp3/         # Dynamic probability benchmark results
+│   └── 04_exp3_gamma_sweep/     # EXP3 gamma sensitivity results
 ├── src/
 │   ├── agents.py                # Bandit algorithms
 │   ├── envs.py                  # Stationary and dynamic environments
 │   ├── experiment.py            # Stationary benchmark runner
-│   └── exp3_dynamic_experiment.py
+│   ├── exp3_dynamic_experiment.py
+│   └── exp3_gamma_sweep.py
 └── README.md
 ```
 
-The project has three experiment groups:
+The project has four experiment groups:
 
 | Experiment | Purpose | Code | Results |
 | --- | --- | --- | --- |
 | Simple baseline | Introduce random and epsilon-greedy behavior | `experiments/01_simple_baseline/` | `results/01_simple_baseline/` |
 | Stationary benchmark | Compare algorithms when arm probabilities are fixed | `src/experiment.py` | `results/02_stationary_benchmark/` |
 | Dynamic EXP3 benchmark | Test algorithms when the best arm changes over time | `src/exp3_dynamic_experiment.py` | `results/03_dynamic_exp3/` |
+| EXP3 gamma sweep | Compare different EXP3 exploration rates and update rules | `src/exp3_gamma_sweep.py` | `results/04_exp3_gamma_sweep/` |
 
 ## Environment
 
@@ -118,11 +121,40 @@ The default dynamic run uses horizon 1000, 20 random seeds, and segment length 2
 | --- | --- | ---: | ---: | ---: |
 | 1 | UCB (`c=2`) | 132.57 ± 16.05 | 0.667 | 0.779 |
 | 2 | Thompson Sampling | 352.29 ± 41.42 | 0.447 | 0.413 |
-| 3 | Epsilon-Greedy (`epsilon=0.1`) | 423.00 ± 39.33 | 0.378 | 0.295 |
-| 4 | Decay Epsilon-Greedy (`c=1`) | 482.37 ± 37.76 | 0.316 | 0.196 |
-| 5 | EXP3 (`gamma=0.1`) | 521.67 ± 5.46 | 0.271 | 0.131 |
+| 3 | Restarted EXP3 (`gamma=0.1`, restart interval 200) | 365.34 ± 12.52 | 0.486 | 0.391 |
+| 4 | Epsilon-Greedy (`epsilon=0.1`) | 423.00 ± 39.33 | 0.378 | 0.295 |
+| 5 | EXP3.S-style (`gamma=0.1`, `alpha=0.01`) | 440.64 ± 12.36 | 0.383 | 0.266 |
+| 6 | Discounted EXP3 (`gamma=0.1`, `decay=0.99`) | 441.39 ± 11.75 | 0.379 | 0.264 |
+| 7 | Sliding-window EXP3 (`gamma=0.1`, window 200) | 463.44 ± 9.90 | 0.335 | 0.228 |
+| 8 | Decay Epsilon-Greedy (`c=1`) | 482.37 ± 37.76 | 0.316 | 0.196 |
+| 9 | Loss-based EXP3 (`gamma=0.1`) | 516.18 ± 4.34 | 0.272 | 0.140 |
+| 10 | EXP3 (`gamma=0.1`) | 521.67 ± 5.46 | 0.271 | 0.131 |
 
-In this switching-probability environment, vanilla EXP3 still does not perform best. This is an important distinction: standard EXP3 is designed for adversarial bandits, but it usually competes against the best fixed arm in hindsight.
+In this switching-probability environment, vanilla EXP3 still does not perform best. This is an important distinction: standard EXP3 is designed for adversarial bandits, but it usually competes against the best fixed arm in hindsight. Among the EXP3 variants, Restarted EXP3 works best because the restart interval matches the environment's 200-round switching period.
+
+## EXP3 Gamma Sweep
+
+EXP3 uses `gamma` to control how much probability is reserved for uniform exploration. A larger `gamma` explores more, while a smaller `gamma` relies more heavily on the learned exponential weights.
+
+The gamma sweep uses the same dynamic environment as above and compares two EXP3 update rules:
+
+- reward-based EXP3: increases an arm's weight after high reward
+- loss-based EXP3: decreases an arm's weight after low reward
+
+| Rank | EXP3 setting | Cumulative dynamic pseudo-regret ↓ | Average reward ↑ | Current best arm rate ↑ |
+| --- | --- | ---: | ---: | ---: |
+| 1 | `gamma=0.5` | 484.08 ± 8.72 | 0.314 | 0.193 |
+| 2 | loss-based `gamma=0.5` | 485.10 ± 7.54 | 0.312 | 0.192 |
+| 3 | `gamma=0.01` | 496.20 ± 7.47 | 0.295 | 0.173 |
+| 4 | loss-based `gamma=0.01` | 496.20 ± 6.77 | 0.296 | 0.173 |
+| 5 | `gamma=0.2` | 500.94 ± 5.48 | 0.292 | 0.165 |
+| 6 | loss-based `gamma=0.2` | 501.03 ± 4.37 | 0.291 | 0.165 |
+| 7 | loss-based `gamma=0.05` | 515.40 ± 7.82 | 0.274 | 0.141 |
+| 8 | loss-based `gamma=0.1` | 516.18 ± 4.34 | 0.272 | 0.140 |
+| 9 | `gamma=0.05` | 518.70 ± 9.29 | 0.275 | 0.136 |
+| 10 | `gamma=0.1` | 521.67 ± 5.46 | 0.271 | 0.131 |
+
+In this setting, increasing `gamma` to `0.5` improves EXP3 because the best arm changes every 200 rounds. More uniform exploration gives EXP3 more chances to discover the new best arm after each switch. The loss-based update also helps for some smaller gamma values, because low rewards can push a selected arm's weight down instead of merely stopping it from increasing. However, even the best gamma in this sweep still performs worse than UCB in the dynamic benchmark, so changing the update rule helps but does not fully solve the lack of forgetting in vanilla EXP3.
 
 ## Observations
 
@@ -136,9 +168,9 @@ UCB is weaker than the stochastic baselines in this short smoke benchmark. With 
 
 EXP3 has the highest regret in this experiment. This is expected because EXP3 is designed for adversarial bandit settings, where rewards may be chosen by an adversary rather than sampled from fixed stochastic probabilities. In this Bernoulli benchmark, algorithms that exploit the stationary reward structure, especially Thompson Sampling, have a clear advantage.
 
-In the dynamic experiment, EXP3 gives an unexpected result. Before running this experiment, I expected EXP3 to perform best because it is designed for adversarial bandit problems. However, vanilla EXP3 performs worst here, while UCB performs best. UCB is also the only algorithm that clearly recovers after round 200, when the best arm changes. From my perspective, this happens because UCB keeps enough exploration pressure through its confidence bonus, so it continues to try arms other than the one that looked best before the switch.
+In the dynamic experiment, EXP3 gives an unexpected result. Before running this experiment, I expected EXP3 to perform best because it is designed for adversarial bandit problems. However, vanilla EXP3 performs worst here, while UCB performs best. UCB is also the algorithm that recovers most clearly after round 200, when the best arm changes. From my perspective, this happens because UCB keeps enough exploration pressure through its confidence bonus, so it continues to try arms other than the one that looked best before the switch.
 
-The other algorithms are more strongly affected by previous data. For EXP3 in particular, the arm weights can increase exponentially, but they do not decrease or forget old rewards in the current implementation. Therefore, after the first 200 rounds, the arm that was best in the first segment can still have a very large weight. When the environment changes, EXP3 needs time to build up the weight of the new best arm. A better version for this experiment would add some form of forgetting, such as discounted weights, restarted EXP3, sliding-window EXP3, or EXP3.S.
+The other algorithms are more strongly affected by previous data. For EXP3 in particular, the arm weights can increase exponentially, but vanilla EXP3 does not forget old rewards. Therefore, after the first 200 rounds, the arm that was best in the first segment can still have a very large weight. Restarted EXP3 performs much better because it resets the weights at the same frequency as the environment changes. Discounted EXP3, sliding-window EXP3, and EXP3.S-style weight sharing also improve over vanilla EXP3, but they still do not match UCB in this simple piecewise-stationary setting.
 
 ## Reproducing the Experiment
 
@@ -170,6 +202,12 @@ Run the dynamic EXP3 benchmark:
 
 ```bash
 python3 src/exp3_dynamic_experiment.py --horizon 1000 --seeds 20 --segment-length 200 --output-dir results/03_dynamic_exp3
+```
+
+Run the EXP3 gamma sweep:
+
+```bash
+python3 src/exp3_gamma_sweep.py --horizon 1000 --seeds 20 --segment-length 200 --output-dir results/04_exp3_gamma_sweep
 ```
 
 Run the simple baseline scripts:

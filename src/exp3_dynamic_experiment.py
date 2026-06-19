@@ -18,8 +18,13 @@ import pandas as pd
 
 from agents import (
     DecayEpsilonGreedyAgent,
+    DiscountedEXP3Agent,
     EpsilonGreedyAgent,
     EXP3Agent,
+    EXP3SAgent,
+    LossEXP3Agent,
+    RestartedEXP3Agent,
+    SlidingWindowEXP3Agent,
     ThompsonSamplingAgent,
     UCBAgent,
 )
@@ -35,11 +40,26 @@ DEFAULT_PROB_SCHEDULE = [
 ]
 
 
-def make_agents(n_arms: int, seed: int, gamma: float):
+def make_agents(n_arms: int, seed: int, gamma: float, segment_length: int):
     """Create algorithms for the dynamic benchmark."""
 
     return [
         EXP3Agent(n_arms=n_arms, gamma=gamma, seed=seed),
+        LossEXP3Agent(n_arms=n_arms, gamma=gamma, seed=seed),
+        RestartedEXP3Agent(
+            n_arms=n_arms,
+            gamma=gamma,
+            restart_interval=segment_length,
+            seed=seed,
+        ),
+        DiscountedEXP3Agent(n_arms=n_arms, gamma=gamma, decay=0.99, seed=seed),
+        SlidingWindowEXP3Agent(
+            n_arms=n_arms,
+            gamma=gamma,
+            window_size=segment_length,
+            seed=seed,
+        ),
+        EXP3SAgent(n_arms=n_arms, gamma=gamma, alpha=0.01, seed=seed),
         EpsilonGreedyAgent(n_arms=n_arms, epsilon=0.1, seed=seed),
         DecayEpsilonGreedyAgent(n_arms=n_arms, c=1.0, seed=seed),
         UCBAgent(n_arms=n_arms, c=2.0, seed=seed),
@@ -97,7 +117,12 @@ def run_benchmark(prob_schedule, segment_length: int, horizon: int, n_seeds: int
     all_runs = []
     n_arms = len(prob_schedule[0])
     for seed in range(n_seeds):
-        for agent in make_agents(n_arms=n_arms, seed=seed, gamma=gamma):
+        for agent in make_agents(
+            n_arms=n_arms,
+            seed=seed,
+            gamma=gamma,
+            segment_length=segment_length,
+        ):
             all_runs.append(run_one_seed(agent, prob_schedule, segment_length, horizon, seed))
     return pd.concat(all_runs, ignore_index=True)
 
